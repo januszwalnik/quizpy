@@ -222,6 +222,30 @@ class QuizApp:
         style.map('Danger.TButton',
                   foreground=[('pressed', 'white'), ('active', 'white')],
                   background=[('pressed', '#C62828'), ('active', self.accent_color)])
+    
+    def center_window_on_parent(self, window):
+        """Center a dialog window on the main window"""
+        window.update_idletasks()
+        
+        # Get main window position and size
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        # Get dialog size
+        dialog_width = window.winfo_width()
+        dialog_height = window.winfo_height()
+        
+        # Calculate center position
+        x = main_x + (main_width - dialog_width) // 2
+        y = main_y + (main_height - dialog_height) // 2
+        
+        # Ensure window is not off-screen
+        x = max(0, x)
+        y = max(0, y)
+        
+        window.geometry(f"+{x}+{y}")
         
     def create_start_screen(self):
         """Create the initial screen to load quiz data"""
@@ -329,19 +353,37 @@ class QuizApp:
         )
         question_label.pack(anchor=tk.W, pady=(0, 25))
         
-        # Radio buttons for options
-        self.selected_option = tk.IntVar()
+        # Options: single-select (radiobuttons) or multi-select (checkboxes)
         options_frame = ttk.Frame(main_frame)
         options_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
-        
-        for i, option in enumerate(question_data['options']):
-            radio = ttk.Radiobutton(
-                options_frame,
-                text=option,
-                variable=self.selected_option,
-                value=i
-            )
-            radio.pack(anchor=tk.W, pady=12)
+
+        correct_field = question_data.get('correct')
+        multi_select = isinstance(correct_field, list)
+
+        # Restore previous answer if present
+        prev_answer = None
+        if self.current_question < len(self.user_answers):
+            prev_answer = self.user_answers[self.current_question]
+
+        if multi_select:
+            # Create checkbox variables
+            self.checkbox_vars = []
+            for i, option in enumerate(question_data['options']):
+                var = tk.BooleanVar(value=(isinstance(prev_answer, (list, set)) and i in prev_answer))
+                cb = ttk.Checkbutton(options_frame, text=option, variable=var)
+                cb.pack(anchor=tk.W, pady=8)
+                self.checkbox_vars.append(var)
+        else:
+            # Single choice via radio buttons
+            self.selected_option = tk.IntVar(value=(prev_answer if isinstance(prev_answer, int) else -1))
+            for i, option in enumerate(question_data['options']):
+                radio = ttk.Radiobutton(
+                    options_frame,
+                    text=option,
+                    variable=self.selected_option,
+                    value=i
+                )
+                radio.pack(anchor=tk.W, pady=12)
         
         # Show answer button
         show_answer_btn = ttk.Button(
@@ -382,12 +424,22 @@ class QuizApp:
     
     def next_question(self):
         """Move to the next question"""
-        self.user_answers.append(self.selected_option.get())
+        # Save answer depending on question type
+        q = self.quiz_data[self.current_question]
+        correct = q.get('correct')
+        if isinstance(correct, list):
+            # multi-select
+            selected = [i for i, v in enumerate(getattr(self, 'checkbox_vars', [])) if v.get()]
+            self.user_answers.append(selected)
+            if set(selected) == set(correct):
+                self.score += 1
+        else:
+            val = self.selected_option.get()
+            self.user_answers.append(val)
+            if val == correct:
+                self.score += 1
+
         self.current_question += 1
-        
-        if self.selected_option.get() == self.quiz_data[self.current_question - 1]['correct']:
-            self.score += 1
-        
         self.show_question()
     
     def show_answer_popup(self, question_data):
@@ -396,16 +448,29 @@ class QuizApp:
         popup.title("Correct Answer")
         popup.geometry("500x300")
         popup.resizable(True, True)
+        self.center_window_on_parent(popup)
         
         frame = ttk.Frame(popup, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
         
         # Correct answer
-        correct_idx = question_data['correct']
-        correct_answer = question_data['options'][correct_idx]
-        
+        correct_field = question_data.get('correct')
+        options = question_data.get('options', [])
         ttk.Label(frame, text="Correct Answer:", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(frame, text=f"{correct_idx + 1}: {correct_answer}", font=("Arial", 11, "bold"), foreground="green").pack(anchor=tk.W, pady=(0, 15))
+        if isinstance(correct_field, list):
+            answers = []
+            for idx in correct_field:
+                if 0 <= idx < len(options):
+                    answers.append(f"{idx + 1}: {options[idx]}")
+            answers_text = "\n".join(answers) if answers else "(No valid answers)"
+            ttk.Label(frame, text=answers_text, font=("Arial", 11, "bold"), foreground="green", justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
+        else:
+            try:
+                correct_idx = int(correct_field)
+                correct_answer = options[correct_idx]
+                ttk.Label(frame, text=f"{correct_idx + 1}: {correct_answer}", font=("Arial", 11, "bold"), foreground="green").pack(anchor=tk.W, pady=(0, 15))
+            except Exception:
+                ttk.Label(frame, text="(Invalid correct answer)", font=("Arial", 11, "bold"), foreground="green").pack(anchor=tk.W, pady=(0, 15))
         
         # Explanation
         explanation = question_data.get('explanation', 'No explanation provided')
@@ -427,11 +492,21 @@ class QuizApp:
     
     def finish_quiz(self):
         """End the quiz and show results"""
+        # Save current answer (similar to next_question logic) if not already saved
         if len(self.user_answers) < self.current_question + 1:
-            self.user_answers.append(self.selected_option.get())
-            if self.selected_option.get() == self.quiz_data[self.current_question]['correct']:
-                self.score += 1
-        
+            q = self.quiz_data[self.current_question]
+            correct = q.get('correct')
+            if isinstance(correct, list):
+                selected = [i for i, v in enumerate(getattr(self, 'checkbox_vars', [])) if v.get()]
+                self.user_answers.append(selected)
+                if set(selected) == set(correct):
+                    self.score += 1
+            else:
+                val = self.selected_option.get()
+                self.user_answers.append(val)
+                if val == correct:
+                    self.score += 1
+
         self.show_results()
     
     def show_results(self):
@@ -475,9 +550,13 @@ class QuizApp:
         
         # Display each question with user answer
         for i, question_data in enumerate(self.quiz_data):
-            user_answer = self.user_answers[i] if i < len(self.user_answers) else -1
-            correct = question_data['correct']
-            is_correct = user_answer == correct
+            user_answer = self.user_answers[i] if i < len(self.user_answers) else None
+            correct = question_data.get('correct')
+            # Determine correctness for single or multi-select
+            if isinstance(correct, list):
+                is_correct = isinstance(user_answer, (list, set)) and set(user_answer) == set(correct)
+            else:
+                is_correct = (user_answer == correct)
             
             # Question card with border effect
             card_frame = ttk.Frame(scrollable_frame)
@@ -498,24 +577,31 @@ class QuizApp:
             )
             question_label.pack(anchor=tk.W, pady=(5, 8))
             
-            if user_answer >= 0 and user_answer < len(question_data['options']):
-                answer_text = f"Your answer: {question_data['options'][user_answer]}"
-                answer_label = ttk.Label(
-                    card_frame,
-                    text=answer_text,
-                    foreground=status_color,
-                    font=('Segoe UI', 10)
-                )
+            # Display user's answer (handle list or single)
+            opts = question_data.get('options', [])
+            if isinstance(user_answer, list):
+                parts = [opts[idx] for idx in user_answer if 0 <= idx < len(opts)]
+                answer_text = f"Your answer: {', '.join(parts) if parts else '(invalid)'}"
+                answer_label = ttk.Label(card_frame, text=answer_text, foreground=status_color, font=('Segoe UI', 10))
+                answer_label.pack(anchor=tk.W, padx=20, pady=3)
+            elif isinstance(user_answer, int) and 0 <= user_answer < len(opts):
+                answer_text = f"Your answer: {opts[user_answer]}"
+                answer_label = ttk.Label(card_frame, text=answer_text, foreground=status_color, font=('Segoe UI', 10))
                 answer_label.pack(anchor=tk.W, padx=20, pady=3)
             
             if not is_correct:
-                correct_text = f"Correct answer: {question_data['options'][correct]}"
-                correct_label = ttk.Label(
-                    card_frame,
-                    text=correct_text,
-                    foreground=self.primary_color,
-                    font=('Segoe UI', 10, 'bold')
-                )
+                # Show correct answer(s)
+                opts = question_data.get('options', [])
+                if isinstance(correct, list):
+                    parts = [opts[idx] for idx in correct if 0 <= idx < len(opts)]
+                    correct_text = f"Correct answer: {', '.join(parts) if parts else '(invalid)'}"
+                else:
+                    try:
+                        correct_text = f"Correct answer: {opts[correct]}"
+                    except Exception:
+                        correct_text = "Correct answer: (invalid)"
+
+                correct_label = ttk.Label(card_frame, text=correct_text, foreground=self.primary_color, font=('Segoe UI', 10, 'bold'))
                 correct_label.pack(anchor=tk.W, padx=20, pady=3)
             
             # Show explanation if exists
@@ -559,6 +645,7 @@ class QuizApp:
         dialog.geometry("700x750")
         dialog.resizable(True, True)
         dialog.configure(bg=self.bg_color)
+        self.center_window_on_parent(dialog)
         
         # Create main frame with scrollbar
         canvas = tk.Canvas(dialog, bg=self.bg_color, highlightthickness=0)
@@ -658,6 +745,7 @@ class QuizApp:
         dialog.geometry("1100x750")
         dialog.resizable(True, True)
         dialog.configure(bg=self.bg_color)
+        self.center_window_on_parent(dialog)
         
         main_frame = ttk.Frame(dialog)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -697,6 +785,7 @@ class QuizApp:
             export_dialog.geometry("800x600")
             export_dialog.resizable(True, True)
             export_dialog.configure(bg=self.bg_color)
+            self.center_window_on_parent(export_dialog)
             
             frame = ttk.Frame(export_dialog, padding="20")
             frame.pack(fill=tk.BOTH, expand=True)
@@ -783,9 +872,21 @@ class QuizApp:
                 options_text = "\n".join([f"  {i}: {opt}" for i, opt in enumerate(q.get('options', []))])
                 ttk.Label(q_frame, text=options_text, font=("Segoe UI", 9), justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 5))
                 
-                # Correct answer
-                correct_idx = q.get('correct', 0)
-                correct_text = f"✓ Correct: {correct_idx} - {q.get('options', ['N/A'])[correct_idx]}"
+                # Correct answer (handle single index or list)
+                correct_field = q.get('correct', 0)
+                opts = q.get('options', ['N/A'])
+                if isinstance(correct_field, list):
+                    parts = []
+                    for ci in correct_field:
+                        if 0 <= ci < len(opts):
+                            parts.append(f"{ci}: {opts[ci]}")
+                    correct_text = "✓ Correct: " + ", ".join(parts) if parts else "✓ Correct: (invalid)"
+                else:
+                    try:
+                        correct_text = f"✓ Correct: {correct_field} - {opts[correct_field]}"
+                    except Exception:
+                        correct_text = "✓ Correct: (invalid)"
+
                 ttk.Label(q_frame, text=correct_text, font=("Segoe UI", 9, "bold"), foreground=self.success_color).pack(anchor=tk.W, pady=(0, 5))
                 
                 # Explanation if exists
@@ -832,6 +933,7 @@ class QuizApp:
         dialog.geometry("700x750")
         dialog.resizable(True, True)
         dialog.configure(bg=self.bg_color)
+        self.center_window_on_parent(dialog)
         
         # Create main frame with scrollbar
         canvas = tk.Canvas(dialog, bg=self.bg_color, highlightthickness=0)
@@ -931,6 +1033,7 @@ class QuizApp:
         dialog.geometry("850x650")
         dialog.resizable(True, True)
         dialog.configure(bg=self.bg_color)
+        self.center_window_on_parent(dialog)
         
         main_frame = ttk.Frame(dialog)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -1034,11 +1137,27 @@ class QuizApp:
                         messagebox.showerror("Error", f"Question {i+1} must have at least 2 options")
                         return
                     
-                    if not isinstance(q['correct'], int) or q['correct'] < 0 or q['correct'] >= len(q['options']):
-                        messagebox.showerror("Error", f"Question {i+1} has invalid 'correct' index")
+                    correct_field = q['correct']
+                    # Accept either a single int index or a list of int indices
+                    if isinstance(correct_field, int):
+                        if correct_field < 0 or correct_field >= len(q['options']):
+                            messagebox.showerror("Error", f"Question {i+1} has invalid 'correct' index")
+                            return
+                    elif isinstance(correct_field, list):
+                        if len(correct_field) == 0 or not all(isinstance(x, int) for x in correct_field):
+                            messagebox.showerror("Error", f"Question {i+1} has invalid 'correct' list (must be list of indices)")
+                            return
+                        if any(x < 0 or x >= len(q['options']) for x in correct_field):
+                            messagebox.showerror("Error", f"Question {i+1} has invalid index in 'correct' list")
+                            return
+                        # Normalize to unique indices
+                        correct_field = list(dict.fromkeys(correct_field))
+                        q['correct'] = correct_field
+                    else:
+                        messagebox.showerror("Error", f"Question {i+1} has invalid 'correct' field (must be int or list)")
                         return
                     
-                    # Add to database
+                    # Add to database (store int or list as provided)
                     if self.db.add_question(q['question'], q['options'], q['correct'], q.get('explanation', '')):
                         added_count += 1
                 
