@@ -2,6 +2,8 @@
 
 A lightweight, MongoDB-backed quiz application with a modern Tkinter UI.
 
+![alt text](images/image.png)
+
 - 🧩 Purpose: Create, manage and take multiple-choice quizzes stored in MongoDB. Supports single-answer and multi-select questions, JSON import/export, and explanations for each question.
 - 🎨 UI: Modernized Tkinter + ttk styles with accessible keyboard shortcuts and centered dialogs.
 - 🐳 Packaging: Intended to run in Docker, but can also be run locally.
@@ -69,6 +71,53 @@ Usage:
 ```bash
 python3 scripts/fix_question_json.py question_7.json question_7_clean.json
 ```
+
+## Adding questions
+
+You can add questions to the quiz in three ways:
+
+- In-app: use the **Add New Question** dialog (Home → Add New Question). Enter the question text, put each option on its own line, set the correct option index (0-based), and save.
+- Import JSON: use **Import Questions from JSON** (Home → Import Questions from JSON). Paste a JSON array (see format below) and click Import.
+- Programmatically: insert documents directly into the MongoDB `questions` collection. Documents must follow the JSON format below.
+
+JSON format details
+- The import expects a JSON array where each item is an object with the following fields:
+  - `question` (string) — the question text.
+  - `options` (array of strings) — two or more answer options.
+  - `correct` (integer OR array of integers) — either a single 0-based index for single-answer questions, or a list of 0-based indices for multi-select questions.
+  - `explanation` (string, optional) — explanation shown on the results page.
+
+Example single-answer entry:
+
+```json
+{
+  "question": "To minimize development effort when automating workflow tasks like creating ServiceNow tickets for a subject rights request, which tool should be used?",
+  "options": [
+    "Azure Automation",
+    "Azure Logic Apps",
+    "Microsoft Power Automate",
+    "Microsoft Sentinel"
+  ],
+  "correct": 2,
+  "explanation": "Microsoft Priva comes with pre-built Power Automate templates for common subject rights request tasks, providing a low-code solution that minimizes development work."
+}
+```
+
+Example multi-select entry:
+
+```json
+{
+  "question": "Which two components should you include?",
+  "options": ["A", "B", "C", "D"],
+  "correct": [0, 2],
+  "explanation": "Both A and C are required because..."
+}
+```
+
+Notes
+- Indexing is 0-based; ensure `correct` indices are within `0..len(options)-1`.
+- The import validates structure and will reject malformed entries.
+- Use `scripts/fix_question_json.py` to clean MongoDB exports before importing.
 
 ## Development notes
 - Main app file: `app.py`
