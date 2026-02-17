@@ -405,7 +405,7 @@ class QuizApp:
         correct_answer = question_data['options'][correct_idx]
         
         ttk.Label(frame, text="Correct Answer:", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(frame, text=f"{correct_idx}: {correct_answer}", font=("Arial", 11, "bold"), foreground="green").pack(anchor=tk.W, pady=(0, 15))
+        ttk.Label(frame, text=f"{correct_idx + 1}: {correct_answer}", font=("Arial", 11, "bold"), foreground="green").pack(anchor=tk.W, pady=(0, 15))
         
         # Explanation
         explanation = question_data.get('explanation', 'No explanation provided')
