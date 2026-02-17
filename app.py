@@ -7,6 +7,20 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 from datetime import datetime
 from bson.objectid import ObjectId
+import logging
+import traceback
+
+# Logging setup
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+logger = logging.getLogger('quizpy')
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+sh = logging.StreamHandler()
+sh.setFormatter(formatter)
+fh = logging.FileHandler('app.log')
+fh.setFormatter(formatter)
+logger.addHandler(sh)
+logger.addHandler(fh)
 
 
 class DatabaseConnection:
@@ -25,9 +39,10 @@ class DatabaseConnection:
             self.client.admin.command('ping')
             self.db = self.client['quizdb']
             self.connected = True
-            print("Connected to MongoDB successfully")
+            logger.info("Connected to MongoDB successfully")
         except Exception as e:
-            print(f"MongoDB not ready yet, will retry on first use: {e}")
+            logger.warning(f"MongoDB not ready yet, will retry on first use: {e}")
+            logger.debug(traceback.format_exc())
             self.connected = False
             self.db = None
             self.client = None
@@ -44,10 +59,11 @@ class DatabaseConnection:
             self.client.admin.command('ping')
             self.db = self.client['quizdb']
             self.connected = True
-            print("Connected to MongoDB successfully")
+            logger.info("Connected to MongoDB successfully")
             return True
         except Exception as e:
-            print(f"Failed to connect to MongoDB: {e}")
+            logger.error(f"Failed to connect to MongoDB: {e}")
+            logger.debug(traceback.format_exc())
             self.connected = False
             self.db = None
             self.client = None
@@ -63,12 +79,10 @@ class DatabaseConnection:
                 print("Database is None")
                 return []
             questions = list(self.db.questions.find().sort('createdAt', -1))
-            print(f"Successfully fetched {len(questions)} questions from database")
+            logger.info("Successfully fetched %d questions from database", len(questions))
             return questions
         except Exception as e:
-            print(f"Error fetching questions: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error fetching questions: %s", e)
             return []
     
     def add_question(self, question_text, options, correct_index, explanation=""):
@@ -87,12 +101,10 @@ class DatabaseConnection:
                 'explanation': explanation,
                 'createdAt': datetime.now()
             })
-            print("Question added successfully")
+            logger.info("Question added successfully: %s", question_text)
             return True
         except Exception as e:
-            print(f"Error adding question: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error adding question: %s", e)
             return False
     
     def delete_question(self, question_id):
@@ -106,7 +118,7 @@ class DatabaseConnection:
             result = self.db.questions.delete_one({'_id': ObjectId(question_id)})
             return result.deleted_count > 0
         except Exception as e:
-            print(f"Error deleting question: {e}")
+            logger.exception("Error deleting question: %s", e)
             return False
     
     def delete_all_questions(self):
@@ -117,10 +129,10 @@ class DatabaseConnection:
             if self.db is None:
                 return False
             result = self.db.questions.delete_many({})
-            print(f"Deleted {result.deleted_count} questions")
+            logger.info("Deleted %d questions", result.deleted_count)
             return True
         except Exception as e:
-            print(f"Error deleting all questions: {e}")
+            logger.exception("Error deleting all questions: %s", e)
             return False
     
     def update_question(self, question_id, question_text, options, correct_index, explanation=""):
@@ -143,7 +155,7 @@ class DatabaseConnection:
             )
             return result.modified_count > 0
         except Exception as e:
-            print(f"Error updating question: {e}")
+            logger.exception("Error updating question: %s", e)
             return False
     
     def close(self):
@@ -798,6 +810,14 @@ class QuizApp:
             json_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
             json_text.insert(1.0, json_string)
             json_text.config(state=tk.DISABLED)
+
+            # Bind Ctrl+C in this dialog to the safe copy handler to avoid crashes
+            def safe_keyboard_copy(event=None):
+                copy_to_clipboard()
+                return 'break'
+
+            json_text.bind('<Control-c>', safe_keyboard_copy)
+            json_text.bind('<Control-C>', safe_keyboard_copy)
             
             # Scrollbars
             vsb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=json_text.yview)
@@ -809,9 +829,37 @@ class QuizApp:
             btn_frame.pack(fill=tk.X, pady=10)
             
             def copy_to_clipboard():
-                export_dialog.clipboard_clear()
-                export_dialog.clipboard_append(json_string)
-                messagebox.showinfo("Success", "JSON copied to clipboard!")
+                try:
+                        export_dialog.clipboard_clear()
+                        export_dialog.clipboard_append(json_string)
+                        logger.info("Export JSON copied to clipboard via export_dialog")
+                        messagebox.showinfo("Success", "JSON copied to clipboard!")
+                        return
+                except tk.TclError:
+                    # Some environments (headless or restricted clipboards) may raise TclError
+                    try:
+                        # Try main root clipboard as a fallback
+                            self.root.clipboard_clear()
+                            self.root.clipboard_append(json_string)
+                            logger.info("Export JSON copied to clipboard via root")
+                            messagebox.showinfo("Success", "JSON copied to clipboard (root)!")
+                            return
+                    except tk.TclError:
+                            # Final fallback: offer to save to a file
+                            logger.exception("Clipboard unavailable for export JSON")
+                            if messagebox.askyesno("Clipboard Unavailable", "Could not access the clipboard. Would you like to save the JSON to a file instead?"):
+                                path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[('JSON files', '*.json'), ('All files', '*.*')])
+                                if path:
+                                    try:
+                                        with open(path, 'w', encoding='utf-8') as f:
+                                            f.write(json_string)
+                                        logger.info("Export JSON saved to file: %s", path)
+                                        messagebox.showinfo("Saved", f"JSON saved to {path}")
+                                    except Exception as e:
+                                        logger.exception("Failed to save export JSON to file: %s", e)
+                                        messagebox.showerror("Error", f"Failed to save file: {e}")
+                            else:
+                                messagebox.showwarning("Not Copied", "JSON was not copied to clipboard.")
             
             ttk.Button(btn_frame, text="Copy to Clipboard", command=copy_to_clipboard, style='Success.TButton').pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
             ttk.Button(btn_frame, text="Close", command=export_dialog.destroy, style='TButton').pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -1165,8 +1213,10 @@ class QuizApp:
                 dialog.destroy()
             
             except json.JSONDecodeError as e:
+                logger.exception("JSON decode error during import: %s", e)
                 messagebox.showerror("JSON Error", f"Invalid JSON format at line {e.lineno}, col {e.colno}: {e.msg}")
             except Exception as e:
+                logger.exception("Failed to import questions: %s", e)
                 messagebox.showerror("Error", f"Failed to import questions: {str(e)}")
         
         # Buttons
@@ -1178,9 +1228,22 @@ class QuizApp:
 
 
 def main():
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as e:
+        # Likely no X display available (headless environment)
+        logger.error("Failed to initialize Tkinter. Is an X display available?")
+        logger.exception(e)
+        logger.error("If you're running inside Docker or a headless server, run with X forwarding or use xvfb-run.")
+        return
+
     app = QuizApp(root)
-    root.mainloop()
+    try:
+        root.mainloop()
+    except tk.TclError as e:
+        # If the X connection is lost during runtime (e.g. server shutdown), exit gracefully
+        logger.error("X connection lost; exiting.")
+        logger.exception(e)
 
 
 if __name__ == "__main__":
