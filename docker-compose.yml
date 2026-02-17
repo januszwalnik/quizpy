@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: quizpy_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: quizadmin
+      MONGO_INITDB_ROOT_PASSWORD: quizpass123
+      MONGO_INITDB_DATABASE: quizdb
+    volumes:
+      - mongodb_data:/data/db
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js
+    networks:
+      - quizpy_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  quizapp:
+    build: .
+    container_name: quizpy_app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://quizadmin:quizpass123@mongodb:27017/quizdb?authSource=admin
+      PYTHONUNBUFFERED: 1
+      DISPLAY: ${DISPLAY}
+      QT_X11_GL_PLUGIN_CACHE: /tmp/qt_cache
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /home/janusz/.Xauthority:/root/.Xauthority:rw
+    networks:
+      - quizpy_network
+    stdin_open: true
+    tty: true
+    command: sh -c "sleep 5 && python app.py"
+
+volumes:
+  mongodb_data:
+
+networks:
+  quizpy_network:
+    driver: bridge
